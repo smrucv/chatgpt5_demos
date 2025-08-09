@@ -34,6 +34,7 @@ const PLAYER_SPEED = 3;    // velocidad horizontal
 const JUMP_VELOCITY = -12; // fuerza de salto
 let BALLOON_INTERVAL = 2000; // ms entre globos (disminuye con dificultad)
 let BALLOON_SPEED = 1.5;     // velocidad base de globos
+let groundY = 0; // se define en resize
 // ===============================================================
 
 // ------ Configuración inicial ------
@@ -97,7 +98,6 @@ function sfxTalk(){sfx(200,'triangle',0.4);}
 
 // Mundo
 const worldWidth = 2000;
-let groundY = 0; // se define en resize
 let startTime = 0;
 let elapsed = 0;
 let lastSpawn = 0;
