@@ -26,6 +26,7 @@
   <button id="btnRight">▶</button>
   <button id="btnJump">⤒</button>
   <button id="btnTalk">E</button>
+  <button id="btnShoot">🎯</button>
 </div>
 <script>
 // =================== PARÁMETROS AJUSTABLES =====================
@@ -34,6 +35,7 @@ const PLAYER_SPEED = 3;    // velocidad horizontal
 const JUMP_VELOCITY = -12; // fuerza de salto
 let BALLOON_INTERVAL = 2000; // ms entre globos (disminuye con dificultad)
 let BALLOON_SPEED = 1.5;     // velocidad base de globos
+let groundY = 0; // se define en resize
 // ===============================================================
 
 // ------ Configuración inicial ------
@@ -53,8 +55,9 @@ const btnLeft = document.getElementById('btnLeft');
 const btnRight = document.getElementById('btnRight');
 const btnJump = document.getElementById('btnJump');
 const btnTalk = document.getElementById('btnTalk');
+const btnShoot = document.getElementById('btnShoot');
 
-let keys = {left:false,right:false,jump:false,talk:false};
+let keys = {left:false,right:false,jump:false,talk:false,shoot:false};
 btnLeft.onmousedown = btnLeft.ontouchstart = ()=>keys.left=true;
 btnLeft.onmouseup = btnLeft.ontouchend = ()=>keys.left=false;
 btnRight.onmousedown = btnRight.ontouchstart = ()=>keys.right=true;
@@ -63,6 +66,8 @@ btnJump.onmousedown = btnJump.ontouchstart = ()=>keys.jump=true;
 btnJump.onmouseup = btnJump.ontouchend = ()=>keys.jump=false;
 btnTalk.onmousedown = btnTalk.ontouchstart = ()=>keys.talk=true;
 btnTalk.onmouseup = btnTalk.ontouchend = ()=>keys.talk=false;
+btnShoot.onmousedown = btnShoot.ontouchstart = ()=>keys.shoot=true;
+btnShoot.onmouseup = btnShoot.ontouchend = ()=>keys.shoot=false;
 
 // Entrada teclado
 window.addEventListener('keydown',e=>{
@@ -70,12 +75,14 @@ window.addEventListener('keydown',e=>{
   if(e.key==='ArrowRight') keys.right=true;
   if(e.key===' ') keys.jump=true;
   if(e.key==='e' || e.key==='E') keys.talk=true;
+  if(e.key==='f' || e.key==='F') keys.shoot=true;
 });
 window.addEventListener('keyup',e=>{
   if(e.key==='ArrowLeft') keys.left=false;
   if(e.key==='ArrowRight') keys.right=false;
   if(e.key===' ') keys.jump=false;
   if(e.key==='e' || e.key==='E') keys.talk=false;
+  if(e.key==='f' || e.key==='F') keys.shoot=false;
 });
 
 // Audio simple
@@ -94,14 +101,17 @@ function sfx(freq, type, duration){
 function sfxJump(){sfx(400,'square',0.3);}
 function sfxPop(){sfx(800,'sawtooth',0.2);}
 function sfxTalk(){sfx(200,'triangle',0.4);}
+function sfxShoot(){sfx(600,'square',0.1);}
 
 // Mundo
 const worldWidth = 2000;
-let groundY = 0; // se define en resize
 let startTime = 0;
 let elapsed = 0;
 let lastSpawn = 0;
 let balloons = [];
+let arrows = [];
+let lastShot = 0;
+const SHOOT_INTERVAL = 300; // ms
 let npcs = [
   {x:300,name:'Guardia',dialog:['Buen día, viajero.','Las murallas están seguras.','No causar problemas.']},
   {x:1700,name:'Aldeano',dialog:['La cosecha fue buena.','¿Has visto mis ovejas?','Bonito día, ¿no?']}
@@ -121,6 +131,8 @@ function reset(){
   player.y = groundY - player.h;
   player.vy = 0;
   balloons = [];
+  arrows = [];
+  lastShot = 0;
   elapsed = 0;
   lastSpawn = 0;
   startTime = performance.now();
@@ -175,10 +187,32 @@ function update(dt){
   if(player.y+player.h >= groundY){
     player.y = groundY-player.h;player.vy=0;player.onGround=true;
   }
+  // disparos
+  if(keys.shoot && performance.now()-lastShot > SHOOT_INTERVAL){
+    arrows.push({x:player.x+player.w/2,y:player.y,vy:8});
+    lastShot = performance.now();
+    sfxShoot();
+  }
+  arrows.forEach(a=>{a.y-=a.vy;});
+  arrows = arrows.filter(a=>a.y>-20);
   // globos
   balloons.forEach(b=>{b.y -= b.vy;});
   balloons = balloons.filter(b=>b.y>-40);
-  // colisiones globos
+  // colisiones disparo-globo
+  for(let a of arrows){
+    for(let i=balloons.length-1;i>=0;i--){
+      const b = balloons[i];
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      if(Math.hypot(dx,dy)<20){
+        sfxPop();
+        balloons.splice(i,1);
+        a.hit=true;
+      }
+    }
+  }
+  arrows = arrows.filter(a=>!a.hit);
+  // colisiones globos-jugador
   for(let b of balloons){
     const dx = (player.x+player.w/2) - b.x;
     const dy = (player.y+player.h/2) - b.y;
@@ -208,6 +242,8 @@ function draw(){
   // muro lejano (parallax lento)
   ctx.fillStyle='#b0c4de';
   ctx.fillRect(-camX*0.3,groundY-200,worldWidth,150);
+  // castillo central 2.5D
+  drawCastle(worldWidth/2 - camX, groundY);
   // banderines animados
   for(let i=0;i<worldWidth;i+=200){
     const x=i - camX*0.6;
@@ -242,6 +278,12 @@ function draw(){
     ctx.lineTo(x,b.y+30);
     ctx.stroke();
   });
+  // flechas
+  ctx.fillStyle='#000';
+  arrows.forEach(a=>{
+    const x=a.x - camX;
+    ctx.fillRect(x-2,a.y,4,10);
+  });
   // jugador
   drawCharacter(player.x - camX, player.y, '#0000ff');
   // mensaje interacción
@@ -251,6 +293,71 @@ function draw(){
       ctx.fillText('E', n.x - camX, groundY-50);
     }
   });
+}
+
+function drawCastle(x, ground){
+  const width=300,height=120,depth=40;
+  // frente
+  ctx.fillStyle='#d3d3d3';
+  ctx.fillRect(x-width/2, ground-height, width, height);
+  // lado derecho
+  ctx.fillStyle='#b0b0b0';
+  ctx.beginPath();
+  ctx.moveTo(x+width/2, ground-height);
+  ctx.lineTo(x+width/2+depth, ground-height-depth*0.5);
+  ctx.lineTo(x+width/2+depth, ground-depth*0.5);
+  ctx.lineTo(x+width/2, ground);
+  ctx.closePath();
+  ctx.fill();
+  // techo
+  ctx.fillStyle='#c0c0c0';
+  ctx.beginPath();
+  ctx.moveTo(x-width/2, ground-height);
+  ctx.lineTo(x-width/2+depth, ground-height-depth*0.5);
+  ctx.lineTo(x+width/2+depth, ground-height-depth*0.5);
+  ctx.lineTo(x+width/2, ground-height);
+  ctx.closePath();
+  ctx.fill();
+  // torres
+  const tW=60,tH=160;
+  // torre izquierda
+  ctx.fillStyle='#d3d3d3';
+  ctx.fillRect(x-width/2-tW, ground-tH, tW, tH);
+  ctx.fillStyle='#b0b0b0';
+  ctx.beginPath();
+  ctx.moveTo(x-width/2, ground-tH);
+  ctx.lineTo(x-width/2+depth, ground-tH-depth*0.5);
+  ctx.lineTo(x-width/2+depth, ground-depth*0.5);
+  ctx.lineTo(x-width/2, ground);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='#c0c0c0';
+  ctx.beginPath();
+  ctx.moveTo(x-width/2-tW, ground-tH);
+  ctx.lineTo(x-width/2-tW+depth, ground-tH-depth*0.5);
+  ctx.lineTo(x-width/2+depth, ground-tH-depth*0.5);
+  ctx.lineTo(x-width/2, ground-tH);
+  ctx.closePath();
+  ctx.fill();
+  // torre derecha
+  ctx.fillStyle='#d3d3d3';
+  ctx.fillRect(x+width/2, ground-tH, tW, tH);
+  ctx.fillStyle='#b0b0b0';
+  ctx.beginPath();
+  ctx.moveTo(x+width/2+tW, ground-tH);
+  ctx.lineTo(x+width/2+tW+depth, ground-tH-depth*0.5);
+  ctx.lineTo(x+width/2+tW+depth, ground-depth*0.5);
+  ctx.lineTo(x+width/2+tW, ground);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='#c0c0c0';
+  ctx.beginPath();
+  ctx.moveTo(x+width/2, ground-tH);
+  ctx.lineTo(x+width/2+depth, ground-tH-depth*0.5);
+  ctx.lineTo(x+width/2+tW+depth, ground-tH-depth*0.5);
+  ctx.lineTo(x+width/2+tW, ground-tH);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function drawCharacter(x,y,color){
