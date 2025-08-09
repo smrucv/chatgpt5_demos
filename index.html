@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Patio del Castillo</title>
+<style>
+  /* Estilos básicos y juego en pantalla completa */
+  html,body{margin:0;padding:0;overflow:hidden;font-family:sans-serif;background:#87ceeb;}
+  #game{display:block;background:#87ceeb;}
+  #score{position:absolute;top:10px;left:10px;color:#fff;font-weight:bold;text-shadow:1px 1px 2px #000;}
+  #retry{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:10px 20px;font-size:20px;display:none;}
+  #dialogue{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.9);padding:10px;border:2px solid #333;display:none;max-width:90%;}
+  #dialogue button{display:block;margin:5px 0;width:100%;}
+  /* Controles móviles */
+  #mobileControls{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:10px;}
+  #mobileControls button{width:60px;height:60px;font-size:24px;border-radius:10px;border:none;background:#fff8;color:#000;}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="score">0</div>
+<button id="retry">Reintentar</button>
+<div id="dialogue"><p id="dlgText"></p><div id="options"></div></div>
+<div id="mobileControls">
+  <button id="btnLeft">◀</button>
+  <button id="btnRight">▶</button>
+  <button id="btnJump">⤒</button>
+  <button id="btnTalk">E</button>
+</div>
+<script>
+// =================== PARÁMETROS AJUSTABLES =====================
+const GRAVITY = 0.6;       // gravedad
+const PLAYER_SPEED = 3;    // velocidad horizontal
+const JUMP_VELOCITY = -12; // fuerza de salto
+let BALLOON_INTERVAL = 2000; // ms entre globos (disminuye con dificultad)
+let BALLOON_SPEED = 1.5;     // velocidad base de globos
+// ===============================================================
+
+// ------ Configuración inicial ------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+resize();
+window.addEventListener('resize', resize);
+
+const scoreEl = document.getElementById('score');
+const retryBtn = document.getElementById('retry');
+const dialogue = document.getElementById('dialogue');
+const dlgText = document.getElementById('dlgText');
+const optionsDiv = document.getElementById('options');
+
+// Controles móviles
+const btnLeft = document.getElementById('btnLeft');
+const btnRight = document.getElementById('btnRight');
+const btnJump = document.getElementById('btnJump');
+const btnTalk = document.getElementById('btnTalk');
+
+let keys = {left:false,right:false,jump:false,talk:false};
+btnLeft.onmousedown = btnLeft.ontouchstart = ()=>keys.left=true;
+btnLeft.onmouseup = btnLeft.ontouchend = ()=>keys.left=false;
+btnRight.onmousedown = btnRight.ontouchstart = ()=>keys.right=true;
+btnRight.onmouseup = btnRight.ontouchend = ()=>keys.right=false;
+btnJump.onmousedown = btnJump.ontouchstart = ()=>keys.jump=true;
+btnJump.onmouseup = btnJump.ontouchend = ()=>keys.jump=false;
+btnTalk.onmousedown = btnTalk.ontouchstart = ()=>keys.talk=true;
+btnTalk.onmouseup = btnTalk.ontouchend = ()=>keys.talk=false;
+
+// Entrada teclado
+window.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft') keys.left=true;
+  if(e.key==='ArrowRight') keys.right=true;
+  if(e.key===' ') keys.jump=true;
+  if(e.key==='e' || e.key==='E') keys.talk=true;
+});
+window.addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft') keys.left=false;
+  if(e.key==='ArrowRight') keys.right=false;
+  if(e.key===' ') keys.jump=false;
+  if(e.key==='e' || e.key==='E') keys.talk=false;
+});
+
+// Audio simple
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioContext();
+function sfx(freq, type, duration){
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type; osc.frequency.value = freq;
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start();
+  gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.stop(audioCtx.currentTime + duration);
+}
+function sfxJump(){sfx(400,'square',0.3);}
+function sfxPop(){sfx(800,'sawtooth',0.2);}
+function sfxTalk(){sfx(200,'triangle',0.4);}
+
+// Mundo
+const worldWidth = 2000;
+let groundY = 0; // se define en resize
+let startTime = 0;
+let elapsed = 0;
+let lastSpawn = 0;
+let balloons = [];
+let npcs = [
+  {x:300,name:'Guardia',dialog:['Buen día, viajero.','Las murallas están seguras.','No causar problemas.']},
+  {x:1700,name:'Aldeano',dialog:['La cosecha fue buena.','¿Has visto mis ovejas?','Bonito día, ¿no?']}
+];
+let player = {x:worldWidth/2,y:0,w:20,h:40,vy:0,onGround:false};
+let state = 'start';
+let highScore = localStorage.getItem('castleHighScore')||0;
+
+function resize(){
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  groundY = canvas.height-80;
+}
+
+function reset(){
+  player.x = worldWidth/2;
+  player.y = groundY - player.h;
+  player.vy = 0;
+  balloons = [];
+  elapsed = 0;
+  lastSpawn = 0;
+  startTime = performance.now();
+  BALLOON_INTERVAL = 2000; // reinicia dificultad
+  BALLOON_SPEED = 1.5;
+  state = 'play';
+  retryBtn.style.display='none';
+}
+
+retryBtn.onclick = reset;
+
+reset();
+
+function spawnBalloon(){
+  const x = Math.random()*worldWidth;
+  balloons.push({x:x,y:groundY+40,vy:BALLOON_SPEED+Math.random()});
+}
+
+function openDialogue(npc){
+  state='dialogue';
+  dlgText.textContent=npc.name+': ¿Qué dices?';
+  optionsDiv.innerHTML='';
+  npc.dialog.forEach(line=>{
+    const btn=document.createElement('button');
+    btn.textContent=line;
+    btn.onclick=()=>{dialogue.style.display='none';state='play';sfxTalk();};
+    optionsDiv.appendChild(btn);
+  });
+  dialogue.style.display='block';
+}
+
+function update(dt){
+  // dificultad
+  if(elapsed>0 && elapsed % 30000 < dt){
+    BALLOON_INTERVAL*=0.8;
+    BALLOON_SPEED+=0.3;
+  }
+  // spawn globos
+  if(performance.now()-lastSpawn > BALLOON_INTERVAL){
+    spawnBalloon();
+    lastSpawn=performance.now();
+  }
+  // movimiento jugador
+  if(keys.left) player.x-=PLAYER_SPEED;
+  if(keys.right) player.x+=PLAYER_SPEED;
+  player.x = Math.max(0,Math.min(worldWidth-player.w,player.x));
+  // salto
+  if(keys.jump && player.onGround){player.vy=JUMP_VELOCITY;player.onGround=false;sfxJump();}
+  // gravedad
+  player.vy += GRAVITY;
+  player.y += player.vy;
+  if(player.y+player.h >= groundY){
+    player.y = groundY-player.h;player.vy=0;player.onGround=true;
+  }
+  // globos
+  balloons.forEach(b=>{b.y -= b.vy;});
+  balloons = balloons.filter(b=>b.y>-40);
+  // colisiones globos
+  for(let b of balloons){
+    const dx = (player.x+player.w/2) - b.x;
+    const dy = (player.y+player.h/2) - b.y;
+    if(Math.hypot(dx,dy)<20){sfxPop();gameOver();}
+  }
+  // interacción NPC
+  if(keys.talk){
+    for(let n of npcs){
+      if(Math.abs(player.x - n.x)<40){openDialogue(n);keys.talk=false;break;}
+    }
+  }
+  elapsed = performance.now() - startTime;
+  scoreEl.textContent = 'Tiempo: '+(elapsed/1000).toFixed(1)+'  Máx: '+(highScore/1000).toFixed(1);
+}
+
+function gameOver(){
+  state='gameover';
+  retryBtn.style.display='block';
+  if(elapsed>highScore){highScore=elapsed;localStorage.setItem('castleHighScore',highScore);}
+}
+
+function draw(){
+  const camX = Math.min(Math.max(player.x - canvas.width/2,0),worldWidth-canvas.width);
+  // cielo
+  ctx.fillStyle='#87ceeb';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // muro lejano (parallax lento)
+  ctx.fillStyle='#b0c4de';
+  ctx.fillRect(-camX*0.3,groundY-200,worldWidth,150);
+  // banderines animados
+  for(let i=0;i<worldWidth;i+=200){
+    const x=i - camX*0.6;
+    ctx.fillStyle='#ff0000';
+    const sway=Math.sin((elapsed/200)+i)*10;
+    ctx.beginPath();
+    ctx.moveTo(x,groundY-200);
+    ctx.lineTo(x+20+sway,groundY-170);
+    ctx.lineTo(x,groundY-170);
+    ctx.fill();
+  }
+  // suelo
+  ctx.fillStyle='#228B22';
+  ctx.fillRect(0,groundY,canvas.width,canvas.height-groundY);
+  ctx.fillStyle='#c2b280';
+  ctx.fillRect(-camX,groundY-20,worldWidth,20);
+  // NPCs
+  npcs.forEach(n=>{
+    const x = n.x - camX;
+    drawCharacter(x,groundY-40,'#654321');
+  });
+  // globos
+  balloons.forEach(b=>{
+    const x=b.x - camX;
+    ctx.fillStyle='#ff69b4';
+    ctx.beginPath();
+    ctx.arc(x,b.y,15,0,Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle='#000';
+    ctx.beginPath();
+    ctx.moveTo(x,b.y+15);
+    ctx.lineTo(x,b.y+30);
+    ctx.stroke();
+  });
+  // jugador
+  drawCharacter(player.x - camX, player.y, '#0000ff');
+  // mensaje interacción
+  npcs.forEach(n=>{
+    if(Math.abs(player.x - n.x)<40){
+      ctx.fillStyle='#fff';
+      ctx.fillText('E', n.x - camX, groundY-50);
+    }
+  });
+}
+
+function drawCharacter(x,y,color){
+  ctx.fillStyle=color;
+  ctx.fillRect(x-10,y,20,40);
+  ctx.fillStyle='#ffe4c4';
+  ctx.beginPath();
+  ctx.arc(x,y-10,10,0,Math.PI*2);
+  ctx.fill();
+}
+
+function loop(ts){
+  if(state==='play') update(16);
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+<!--
+Instrucciones:
+1. Copia este archivo como index.html y ábrelo en un navegador moderno.
+2. Parámetros ajustables al inicio del script: GRAVITY, PLAYER_SPEED, JUMP_VELOCITY, BALLOON_INTERVAL, BALLOON_SPEED.
+3. Controles: flechas ← → para moverse, ESPACIO para saltar, E para hablar. En móviles usa los botones en pantalla.
+-->
+</body>
+</html>
