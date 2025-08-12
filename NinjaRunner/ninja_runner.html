@@ -109,6 +109,16 @@
     crash(){ this.play({type:'square',freq:180,slide:-160,dur:.18,vol:.22,label:'crash'}); this.play({type:'sine',freq:120,slide:-90,dur:.22,vol:.2,delay:.12,label:'crash2'}); },
   };
 
+    // === Mobile: unlock WebAudio on first touch ===
+  function unlockAudioOnce(){
+    audio.ensure();
+    if (audio.ctx && audio.ctx.state === 'suspended') { audio.ctx.resume(); }
+    window.removeEventListener('pointerdown', unlockAudioOnce);
+    window.removeEventListener('touchstart', unlockAudioOnce);
+  }
+  window.addEventListener('pointerdown', unlockAudioOnce, { once:true });
+  window.addEventListener('touchstart', unlockAudioOnce, { once:true });
+
   // ===== Sprite system (Boy/Girl) =====
   let who = 'NinjaBoy';
   const picker = document.getElementById('picker');
