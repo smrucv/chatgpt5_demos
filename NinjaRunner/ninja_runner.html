@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ninja Runner — v3.5</title>
+<style>
+  :root{--bg1:#0e0f2b;--bg2:#14173a;--bg3:#201a44;--ui:#ffffff;--pink:#ff3d7f;--cyan:#00e5ff;--lime:#9bff6a;--gold:#ffd23f;--red:#ff5c67}
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg1),var(--bg2) 70%,var(--bg3));color:var(--ui);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,'Helvetica Neue',Arial,sans-serif}
+  header{display:flex;gap:.5rem;justify-content:space-between;align-items:center;padding:.6rem 1rem;background:linear-gradient(90deg, rgba(255,61,127,.15), rgba(0,229,255,.15));border-bottom:1px solid rgba(255,255,255,.08)}
+  h1{margin:0;font-size:clamp(18px,2.6vw,26px)}
+  .controls{display:flex;gap:.5rem;flex-wrap:wrap}
+  .btn{cursor:pointer;border:none;border-radius:999px;padding:.45rem .8rem;font-weight:700;background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.22)}
+  .btn.primary{background:linear-gradient(180deg,var(--pink),#d61b61)}
+  .pillbar{position:absolute;left:0;right:0;top:52px;display:flex;justify-content:center;pointer-events:none}
+  .pills{display:flex;gap:.75rem;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.15);backdrop-filter:blur(4px);border-radius:14px;padding:.3rem .6rem}
+  .pill{display:flex;gap:.35rem;align-items:center;font-weight:800;padding:.15rem .45rem;border-radius:999px;background:rgba(255,255,255,.08)}
+  canvas{display:block;width:100%;height:calc(100vh - 52px);outline:none}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(1200px 500px at 50% 100%, rgba(255,255,255,.05), rgba(0,0,0,.6) 70%);} 
+  .card{width:min(92vw,620px);background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));border:1px solid rgba(255,255,255,.22);border-radius:18px;box-shadow:0 16px 36px rgba(0,0,0,.4);padding:1rem 1.2rem;text-align:center}
+  .title{font-size:clamp(22px,3.2vw,34px);margin:.2rem 0 .5rem}
+  .picker{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin:.75rem 0 1rem}
+  .opt{position:relative;border:2px solid rgba(255,255,255,.3);border-radius:14px;padding:.6rem;cursor:pointer;user-select:none}
+  .opt[data-selected="true"]{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(0,229,255,.3) inset}
+  .opt h3{margin:.35rem 0 0;font-size:16px}
+  .hint{font-size:12px;opacity:.9}
+  .hint2{font-size:24px;opacity:.9}
+</style>
+</head>
+<body>
+<header>
+  <h1>🥷 Ninja Runner</h1>
+  <div class="controls">
+    <button id="startBtn" class="btn primary" title="Comenzar">Start</button>
+    <button id="retryBtn" class="btn" title="Reintentar (R)">Retry</button>
+    <button id="muteBtn" class="btn" aria-pressed="false" title="Sonido (M)">🔊 Sound</button>
+  </div>
+</header>
+<div class="pillbar" aria-live="polite">
+  <div class="pills">
+    <div class="pill">🏁 Score: <span id="score">0</span></div>
+    <div class="pill">🏆 High: <span id="high">0</span></div>
+    <div class="pill">🚀 Speed: <span id="speed">0</span></div>
+    <div class="pill">👤 Sprite: <span id="who">NinjaBoy</span></div>
+  </div>
+</div>
+<canvas id="game" tabindex="0" aria-label="Game canvas"></canvas>
+<div id="overlay" class="overlay" role="dialog" aria-modal="true" aria-labelledby="ov-title">
+  <div class="card">
+    <div style="font-size:38px">🥷💨</div>
+    <h2 id="ov-title" class="title">Elige tu ninja</h2>
+    <div class="picker" id="picker">
+      <div class="opt" data-who="NinjaBoy" data-selected="true">
+        <div style="height:120px;display:flex;align-items:center;justify-content:center">👦</div>
+        <h3>Boy</h3>
+        <div class="hint">Sprites/NinjaBoy/*.png</div>
+      </div>
+      <div class="opt" data-who="NinjaGirl">
+        <div style="height:120px;display:flex;align-items:center;justify-content:center">👧</div>
+        <h3>Girl</h3>
+        <div class="hint">Sprites/NinjaGirl/*.png</div>
+      </div>
+    </div>
+    <p class="hint2">Inicia con <b>Space</b>/<b>↑</b></p>
+    <!-- button id="ovStart" class="btn primary">Listo</button -->
+  </div>
+</div>
+<script>
+(() => {
+  // ===== Canvas setup (HiDPI safe) =====
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  function fit(){
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const headerH = 52;
+    canvas.width = Math.floor(canvas.clientWidth * dpr);
+    canvas.height = Math.floor((window.innerHeight-headerH) * dpr);
+    canvas.style.height = (window.innerHeight-headerH) + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', fit); fit();
+
+  // ===== Game state =====
+  const state = {
+    running:false, time:0, score:0, high: Number(localStorage.getItem('ninja_high')||0),
+    baseSpeed:2.6, speed:2.6, speedMax:18,
+    gravity:.85, jumpV:-14.5,
+    spawnTimer:0, spawnInterval:1100,
+    obstacles:[], particles:[], clouds:[], trees:[], mountains:[],
+  };
+  const hudScore = document.getElementById('score');
+  const hudHigh = document.getElementById('high');
+  const hudSpeed = document.getElementById('speed');
+  const hudWho = document.getElementById('who');
+  hudHigh.textContent = state.high;
+
+  // ===== Audio (only action SFX — no continuous running) =====
+  const audio = { ctx:null, muted:false, log:[],
+    ensure(){ if(this.muted) return; if(this.ctx) return; this.ctx = new (window.AudioContext||window.webkitAudioContext)(); },
+    play({type='sine',freq=440,dur=.12,vol=.15,slide=0,delay=0,label='sfx'}){
+      if(this.muted) return; this.ensure(); const t0=(this.ctx?.currentTime||0)+delay, t1=t0+dur;
+      if(!this.ctx) return; const o=this.ctx.createOscillator(); const g=this.ctx.createGain();
+      o.type=type; o.frequency.setValueAtTime(freq,t0); if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(40,freq+slide), t1);
+      g.gain.setValueAtTime(0,t0); g.gain.linearRampToValueAtTime(vol,t0+.02); g.gain.exponentialRampToValueAtTime(0.0001,t1);
+      o.connect(g).connect(this.ctx.destination); o.start(t0); o.stop(t1+.02); this.log.push(label);
+    },
+    jump(){ this.play({type:'triangle',freq:520,slide:160,dur:.14,vol:.18,label:'jump'}); },
+//    score(){ this.play({type:'sawtooth',freq:680,slide:180,dur:.11,vol:.14,label:'score'}); },
+    crash(){ this.play({type:'square',freq:180,slide:-160,dur:.18,vol:.22,label:'crash'}); this.play({type:'sine',freq:120,slide:-90,dur:.22,vol:.2,delay:.12,label:'crash2'}); },
+  };
+
+  // ===== Sprite system (Boy/Girl) =====
+  let who = 'NinjaBoy';
+  const picker = document.getElementById('picker');
+  picker.addEventListener('click', (e)=>{
+    const opt = e.target.closest('.opt'); if(!opt) return;
+    [...picker.children].forEach(n=>n.dataset.selected='false');
+    opt.dataset.selected='true';
+    who = opt.dataset.who; hudWho.textContent = who;
+    preloadSprites(); // recarga sprites al cambiar selección
+  });
+//  document.getElementById('ovStart').addEventListener('click', ()=> hideOverlay());
+
+  function pathRun(i){ return `Sprites/${who}/Run__${String(i).padStart(3,'0')}.png`; }
+  function pathJump(i){ return `Sprites/${who}/Jump__${String(i).padStart(3,'0')}.png`; }
+
+  const Sprites = { run:[], jump:[], ready:false };
+  function preloadSprites(onDone){
+    Sprites.run = []; Sprites.jump = []; Sprites.ready=false;
+    let total = 10 + 9, loaded = 0, failed = 0;
+    function done(){ if(loaded+failed === total){ Sprites.ready = loaded>0; onDone && onDone(Sprites.ready, failed); } }
+    for(let i=0;i<10;i++){ const img = new Image(); img.onload=()=>{loaded++; done();}; img.onerror=()=>{failed++; done();}; img.src = pathRun(i); Sprites.run.push(img); }
+    for(let i=0;i<9;i++){ const img = new Image(); img.onload=()=>{loaded++; done();}; img.onerror=()=>{failed++; done();}; img.src = pathJump(i); Sprites.jump.push(img); }
+  }
+
+  // ===== Parallax (BG tied to ninja speed, never faster) =====
+  const PARALLAX = { clouds:0.25, mountains:0.5, trees:0.85 };
+  function initParallax(){
+    state.clouds.length=0; state.trees.length=0; state.mountains.length=0;
+    for(let i=0;i<6;i++) state.clouds.push({x:Math.random()*canvas.clientWidth, y:40+Math.random()*120, w: 80+Math.random()*120});
+    for(let i=0;i<5;i++) state.mountains.push({x:Math.random()*canvas.clientWidth, y: groundY()-140 - Math.random()*40, w: 160+Math.random()*120, h:120+Math.random()*80});
+    for(let i=0;i<10;i++) state.trees.push({x:Math.random()*canvas.clientWidth, y: groundY()-30, h: 24+Math.random()*26});
+  }
+  function drawParallax(dt){
+    const k = dt/16.7;
+    for(const c of state.clouds){ c.x -= state.speed * PARALLAX.clouds * k; if(c.x + c.w < -20) c.x = canvas.clientWidth + 20; drawCloud(c.x, c.y, c.w); }
+    for(const m of state.mountains){ m.x -= state.speed * PARALLAX.mountains * k; if(m.x + m.w < -40) m.x = canvas.clientWidth + 60; drawMountain(m); }
+    const gy = groundY();
+    ctx.fillStyle = '#2c1d55'; ctx.fillRect(0, gy, canvas.clientWidth, 8);
+    ctx.fillStyle = '#6f44ff'; ctx.fillRect(0, gy+8, canvas.clientWidth, 16);
+    for(const t of state.trees){ t.x -= state.speed * PARALLAX.trees * k; if(t.x < -10) t.x = canvas.clientWidth + Math.random()*200; drawTree(t); }
+  }
+  function drawCloud(x,y,w){ ctx.fillStyle='rgba(255,255,255,.85)'; ctx.beginPath(); ctx.ellipse(x,y,w*.35,w*.22,0,0,Math.PI*2); ctx.ellipse(x+w*.25,y-10,w*.28,w*.18,0,0,Math.PI*2); ctx.ellipse(x+w*.5,y,w*.33,w*.2,0,0,Math.PI*2); ctx.fill(); }
+  function drawMountain(m){ const {x,y,w,h} = m; ctx.fillStyle = '#2f2b7c'; ctx.beginPath(); ctx.moveTo(x,y+h); ctx.lineTo(x+w*.5,y); ctx.lineTo(x+w,y+h); ctx.closePath(); ctx.fill(); ctx.fillStyle='#6b68b8'; ctx.beginPath(); ctx.moveTo(x+w*.5,y); ctx.lineTo(x+w*.65,y+h*.3); ctx.lineTo(x+w*.35,y+h*.3); ctx.closePath(); ctx.fill(); }
+  function drawTree(t){ ctx.fillStyle='#402a77'; ctx.fillRect(t.x, t.y- t.h, 6, t.h); ctx.fillStyle='#9bff6a'; ctx.beginPath(); ctx.arc(t.x+3, t.y- t.h-4, 10, 0, Math.PI*2); ctx.fill(); }
+
+  // ===== Ninja using external sprites =====
+  const groundY = () => canvas.clientHeight - 96;
+  const ninja = { x:120, y:0, vy:0, w:84, h:96, onGround:false,
+    state:'run', runI:0, runAcc:0, jumpI:0, jumpAcc:0,
+    reset(){ this.y = groundY()-this.h; this.vy=0; this.onGround=true; this.state='run'; this.runI=0; this.jumpI=0; this.runAcc=0; this.jumpAcc=0; },
+    jump(){ if(this.onGround){ this.vy = state.jumpV; this.onGround=false; this.state='rise'; this.jumpI=0; this.jumpAcc=0; audio.jump(); dust(this.x+this.w*0.2, this.y+this.h); } },
+    update(dt){
+      this.vy += state.gravity; this.y += this.vy;
+      if(this.y >= groundY()-this.h){ if(!this.onGround){ /*audio.land();*/ } this.y = groundY()-this.h; this.vy=0; this.onGround=true; this.state='run'; this.jumpI=0; this.jumpAcc=0; }
+      else { this.onGround=false; this.state = (this.vy < -1) ? 'rise' : (this.vy > 1 ? 'fall' : this.state); }
+
+      // === Run animation: higher FPS tied to speed ===
+      const fps = 14 + Math.min(14, state.speed*1.1); // ~14..28 fps
+      this.runAcc += dt; const frameDur = 1000/fps;
+      while(this.runAcc >= frameDur){ this.runAcc -= frameDur; if(this.state==='run' && Sprites.run.length){ this.runI = (this.runI+1)%Sprites.run.length; } }
+
+      // === Jump animation: play through the 9 frames while airborne ===
+      if(!this.onGround && Sprites.jump.length){
+        const jfps = 15; // consistent, snappy in-air animation
+        this.jumpAcc += dt; const jDur = 1000/jfps;
+        const inc = Math.floor(this.jumpAcc / jDur);
+        //if(inc>0){ this.jumpAcc -= inc*jDur; this.jumpI = Math.min(Sprites.jump.length-1, this.jumpI + inc); }
+        while(this.jumpAcc >= jDur){ this.jumpAcc -= jDur; if(this.state==='rise' && Sprites.jump.length){ this.jumpI = (this.jumpI+1)%Sprites.jump.length; } }
+      }
+    },
+    draw(ctx){
+      // shadow
+      ctx.fillStyle='rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(this.x+this.w*.5, groundY+8, this.w*.45, 6, 0, 0, Math.PI*2); ctx.fill();
+      if(!Sprites.ready){ ctx.fillStyle='#ddd'; ctx.fillRect(this.x, this.y, this.w, this.h); ctx.fillStyle='#000'; ctx.fillText('Cargando sprites…', this.x-20, this.y-10); return; }
+      if(this.state==='run' && Sprites.run.length){ ctx.drawImage(Sprites.run[this.runI], this.x, this.y, this.w, this.h); }
+      else if(Sprites.jump.length){ ctx.drawImage(Sprites.jump[this.jumpI]||Sprites.jump[0], this.x, this.y, this.w, this.h); }
+      else { ctx.drawImage(Sprites.run[this.runI]||Sprites.run[0], this.x, this.y, this.w, this.h); }
+    }
+  };
+
+  // ===== Obstacles =====
+  function spawnObstacle(){ const size = 28 + Math.floor(Math.random()*26); const type = Math.random()<0.7 ? 'box' : 'cactus'; const o = {x: canvas.clientWidth+30, y: groundY()-size, w:size, h:size, type}; state.obstacles.push(o); }
+  function drawObstacle(o){ const {x,y,w,h,type} = o; if(type==='box'){ ctx.save(); ctx.translate(x,y); ctx.fillStyle = '#ff9bd1'; ctx.strokeStyle = '#5b1042'; ctx.lineWidth=3; roundRect(ctx,0,0,w,h,8); ctx.fill(); ctx.stroke(); ctx.fillStyle='#5b1042'; ctx.fillRect(w*0.25,h*0.55,w*0.12,h*0.12); ctx.fillRect(w*0.63,h*0.55,w*0.12,h*0.12); ctx.fillStyle='#fff'; ctx.fillRect(w*0.26,h*0.56,w*0.06,h*0.06); ctx.fillRect(w*0.64,h*0.56,w*0.06,h*0.06); ctx.fillStyle='#5b1042'; ctx.fillRect(w*0.4,h*0.74,w*0.2,4); ctx.restore(); } else { ctx.save(); ctx.translate(x,y); ctx.fillStyle = '#63ff9a'; ctx.strokeStyle = '#0c6a39'; ctx.lineWidth=3; roundRect(ctx, w*0.25, 0, w*0.5, h, 10); ctx.fill(); ctx.stroke(); roundRect(ctx, 0, h*0.35, w*0.3, h*0.45, 8); ctx.fill(); ctx.stroke(); roundRect(ctx, w*0.7, h*0.25, w*0.3, h*0.45, 8); ctx.fill(); ctx.stroke(); ctx.fillStyle='#0c6a39'; ctx.fillRect(w*0.42,h*0.2,4,4); ctx.fillRect(w*0.58,h*0.2,4,4); ctx.fillRect(w*0.46,h*0.3,w*0.08,3); ctx.restore(); } }
+
+  // ===== Particles =====
+  function dust(x,y){ for(let i=0;i<6;i++) state.particles.push({x:x+Math.random()*8,y:y+Math.random()*4, vx:-1-Math.random()*1.5, vy:-1.5-Math.random()*1.2, life:400+Math.random()*300}); }
+  function updateParticles(dt){ for(const p of state.particles){ p.life -= dt; p.x += p.vx; p.y += p.vy; p.vy += 0.05; } state.particles = state.particles.filter(p=>p.life>0); }
+  function drawParticles(){ ctx.save(); ctx.fillStyle='rgba(255,210,63,.8)'; for(const p of state.particles){ ctx.globalAlpha = Math.max(0, Math.min(1, p.life/500)); ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,Math.PI*2); ctx.fill(); } ctx.globalAlpha = 1; ctx.restore(); }
+
+  // ===== Utils =====
+  function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); }
+  function overlap(x1,y1,w1,h1,x2,y2,w2,h2){ return x1 < x2+w2 && x1+w1 > x2 && y1 < y2+h2 && y1+h1 > y2; }
+
+  // ===== Game control =====
+  const overlay = document.getElementById('overlay');
+  function hideOverlay(){ overlay.style.display='none'; preloadSprites(); }
+  function showOverlay(){ overlay.style.display='flex'; preloadSprites(); }
+  function start(){ state.running=true; state.time=0; state.score=0; state.speed=state.baseSpeed; state.obstacles.length=0; state.particles.length=0; state.spawnTimer=0; ninja.reset(); initParallax(); canvas.focus(); }
+  function over(){ state.running=false; if(state.score>state.high){ state.high=state.score; localStorage.setItem('ninja_high', state.high); } audio.crash(); }
+
+  document.getElementById('startBtn').addEventListener('click', ()=>{ state.running=false; showOverlay(); }); //if(overlay.style.display!=='none') hideOverlay(); start(); });
+  document.getElementById('retryBtn').addEventListener('click', start);
+  const muteBtn = document.getElementById('muteBtn');
+  muteBtn.addEventListener('click', ()=>{ audio.muted=!audio.muted; muteBtn.textContent = audio.muted? '🔇 Muted' : '🔊 Sound'; muteBtn.setAttribute('aria-pressed', String(!audio.muted)); });
+
+  // === Jump-to-Start: comenzar al presionar salto ===
+  function handleJumpStart(){ if(!state.running){ if(overlay.style.display!=='none') hideOverlay(); start(); } ninja.jump(); }
+  window.addEventListener('keydown', (e)=>{ if(e.code==='Space' || e.code==='ArrowUp'){ e.preventDefault(); handleJumpStart(); } if(e.code==='KeyR') start(); if(e.code==='KeyM') muteBtn.click(); });
+  canvas.addEventListener('pointerdown', ()=>{ handleJumpStart(); });
+
+  // ===== Loop =====
+  let last = performance.now();
+  function loop(now){ const dt = Math.min(50, now-last); last = now; update(dt); draw(dt); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+
+  function update(dt){
+    hudScore.textContent = state.score; hudHigh.textContent = state.high; hudSpeed.textContent = state.speed.toFixed(1);
+    if(!state.running) return;
+    state.time += dt; const t = state.time / 1000; state.speed = Math.min(state.speedMax, state.baseSpeed + 0.6*t);
+    state.spawnTimer += dt; const interval = Math.max(600, state.spawnInterval - t*30); if(state.spawnTimer > interval){ state.spawnTimer = 0; spawnObstacle(); }
+    for(const o of state.obstacles){ o.x -= state.speed; } state.obstacles = state.obstacles.filter(o => o.x+o.w> -50);
+    ninja.update(dt); updateParticles(dt);
+    const add = Math.floor((state.speed*dt)/10); if(add>0){ const before = state.score; state.score += add; //if(Math.floor(before/400)!==Math.floor(state.score/400)) audio.score(); 
+      }
+    for(const o of state.obstacles){ if(overlap(ninja.x+8,ninja.y+6,ninja.w-16,ninja.h-12,o.x+2,o.y+2,o.w-4,o.h-4)){ over(); break; } }
+  }
+
+  function draw(){ ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight); drawParallax(16.7); for(const o of state.obstacles) drawObstacle(o); ninja.draw(ctx); drawParticles(); }
+
+  // ===== Boot =====
+  preloadSprites(); // precarga por defecto (NinjaBoy)
+})();
+</script>
+</body>
+</html>
